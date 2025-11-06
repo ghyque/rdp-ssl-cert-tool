@@ -23,13 +23,13 @@
 只需一个外部库：
 pip install cryptography
 
-###2️⃣ 运行程序
+### 2️⃣ 运行程序
 python rdp_ssl_tool.py
 
 ⚠️ 请右键 → 以管理员身份运行 CMD 或 PowerShell！
 因为程序需要写入注册表和导入系统证书。
 
-###3️⃣注册表写入说明
+### 3️⃣注册表写入说明
 | 项目 | 注册表路径                                                                                |
 | --- | ----------------------------------------------------------------------------------------- |
 | 位置 | `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp` |
