@@ -21,8 +21,6 @@
 
 ### 1️⃣ 安装依赖
 只需一个外部库：
-
-```bash
 pip install cryptography
 
 ###2️⃣ 运行程序
