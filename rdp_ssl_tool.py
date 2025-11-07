@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*- 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import subprocess
@@ -127,11 +127,40 @@ class RDPCertificateGUI:
     def clear_log(self):
         self.log_text.delete(1.0, tk.END)
 
+    # ✅ 修改后的部分（自动检测证书）
     def browse_file(self):
         f = filedialog.askopenfilename(title="选择证书 ZIP 文件", filetypes=[("ZIP 文件", "*.zip"), ("所有文件", "*.*")])
-        if f:
-            self.file_path_var.set(f)
-            self.log(f"选择证书 ZIP 文件: {f}")
+        if not f:
+            return
+
+        self.file_path_var.set(f)
+        self.log(f"选择证书 ZIP 文件: {f}")
+
+        # 尝试读取 ZIP 内容并识别证书
+        try:
+            temp_dir = tempfile.mkdtemp()
+            with zipfile.ZipFile(f, 'r') as z:
+                z.extractall(temp_dir)
+
+            cert_files, key_files = self.identify_certificate_files(temp_dir)
+
+            if cert_files and key_files:
+                self.log("✅ 证书已读取（检测到证书与私钥文件）")
+            else:
+                missing = []
+                if not cert_files:
+                    missing.append("证书文件")
+                if not key_files:
+                    missing.append("私钥文件")
+                self.log(f"❌ {' 和 '.join(missing)} 缺失")
+
+        except zipfile.BadZipFile:
+            self.log("❌ 无法读取：文件不是有效的 ZIP")
+        except Exception as e:
+            self.log(f"❌ 检测失败: {e}")
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     def toggle_password_entry(self):
         if self.no_password_var.get():
