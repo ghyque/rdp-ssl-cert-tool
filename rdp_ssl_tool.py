@@ -1,10 +1,28 @@
-# -*- coding: utf-8 -*- 
+# -*- coding: utf-8 -*-
+import sys
+import os
+import ctypes
+
+# ── 必须在 tkinter 初始化之前声明 DPI 感知，否则高分屏下界面模糊 ──
+def _set_dpi_awareness():
+    try:
+        # Windows 8.1+：Per-Monitor DPI Aware
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except AttributeError:
+        pass
+    except OSError:
+        try:
+            # Windows Vista/7 fallback
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+_set_dpi_awareness()
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import subprocess
 import winreg
-import os
-import ctypes
 import threading
 import zipfile
 import tempfile
@@ -20,8 +38,21 @@ import hashlib
 class RDPCertificateGUI:
     def __init__(self, root):
         self.root = root
+
+        # 获取当前屏幕 DPI 缩放比（标准 96dpi = 1.0）
+        try:
+            dpi = ctypes.windll.shcore.GetDpiForSystem()
+        except Exception:
+            dpi = ctypes.windll.user32.GetDpiForSystem() if hasattr(ctypes.windll.user32, 'GetDpiForSystem') else 96
+        self._scale = dpi / 96.0  # 例：150% 缩放 → 1.5
+
+        # 宽度 ×1（原始大小），高度 ×1.5
+        base_w, base_h = 600, 600
+        win_w = int(base_w * self._scale)
+        win_h = int(base_h * 1.5 * self._scale)
+
         self.root.title("RDP SSL 证书配置工具")
-        self.root.geometry("600x600")
+        self.root.geometry(f"{win_w}x{win_h}")
         self.root.resizable(False, False)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -40,79 +71,83 @@ class RDPCertificateGUI:
 
     def center_window(self):
         self.root.update_idletasks()
-        width = self.root.winfo_width()
-        height = self.root.winfo_height()
-        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.root.winfo_screenheight() // 2) - (height // 2)
-        self.root.geometry(f'+{x}+{y}')
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
 
     def create_widgets(self):
-        font_main = ("微软雅黑", 10)
-        font_small = ("微软雅黑", 9)
+        s = self._scale
+        font_main = ("微软雅黑", int(10 * s))
+        font_small = ("微软雅黑", int(9 * s))
 
-        main_frame = ttk.Frame(self.root, padding="12")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame = ttk.Frame(self.root, padding=str(int(12 * s)))
+        main_frame.pack(fill=tk.BOTH, expand=False)
 
-        title_label = ttk.Label(main_frame, text="RDP SSL 证书配置工具", font=("微软雅黑", 18, "bold"))
-        title_label.pack(pady=(0, 8))
+        title_label = ttk.Label(main_frame, text="RDP SSL 证书配置工具", font=("微软雅黑", int(13 * s), "bold"))
+        title_label.pack(pady=(0, int(8 * s)))
 
         # ZIP 文件选择
-        file_frame = ttk.LabelFrame(main_frame, text="1. 选择证书 ZIP 文件", padding="6")
-        file_frame.pack(fill=tk.X, pady=(0, 6))
+        file_frame = ttk.LabelFrame(main_frame, text="1. 选择证书 ZIP 文件", padding=str(int(6 * s)))
+        file_frame.pack(fill=tk.X, pady=(0, int(6 * s)))
         file_selection_frame = ttk.Frame(file_frame)
         file_selection_frame.pack(fill=tk.X)
         self.file_path_var = tk.StringVar()
         self.file_entry = ttk.Entry(file_selection_frame, textvariable=self.file_path_var,
-                                   state='readonly', font=font_main)
-        self.file_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+                                   state='readonly', font=("微软雅黑", 10))
+        self.file_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, int(6 * s)))
         self.browse_button = ttk.Button(file_selection_frame, text="浏览", command=self.browse_file)
         self.browse_button.pack(side=tk.RIGHT)
 
         # 密码输入
-        password_frame = ttk.LabelFrame(main_frame, text="2. PFX 文件密码（可选）", padding="6")
-        password_frame.pack(fill=tk.X, pady=(0, 6))
+        password_frame = ttk.LabelFrame(main_frame, text="2. PFX 文件密码", padding=str(int(6 * s)))
+        password_frame.pack(fill=tk.X, pady=(0, int(6 * s)))
+        password_row = ttk.Frame(password_frame)
+        password_row.pack(fill=tk.X)
         self.password_var = tk.StringVar()
-        self.password_entry = ttk.Entry(password_frame, textvariable=self.password_var, show="*", font=font_main)
-        self.password_entry.pack(fill=tk.X)
-        password_options_frame = ttk.Frame(password_frame)
-        password_options_frame.pack(fill=tk.X, pady=(4, 0))
-        self.no_password_var = tk.BooleanVar()
-        ttk.Checkbutton(password_options_frame, text="PFX 无密码",
-                        variable=self.no_password_var,
-                        command=self.toggle_password_entry).pack(side=tk.LEFT)
+        self.password_entry = ttk.Entry(password_row, textvariable=self.password_var, show="*", font=font_main)
+        self.password_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, int(6 * s)))
         self.show_password_var = tk.BooleanVar()
-        ttk.Checkbutton(password_options_frame, text="显示密码",
+        ttk.Checkbutton(password_row, text="显示密码",
                         variable=self.show_password_var,
                         command=self.toggle_show_password).pack(side=tk.RIGHT)
 
         # 导入选项
-        import_frame = ttk.LabelFrame(main_frame, text="3. 证书导入选项", padding="6")
-        import_frame.pack(fill=tk.X, pady=(0, 6))
+        import_frame = ttk.LabelFrame(main_frame, text="3. 证书导入选项", padding=str(int(6 * s)))
+        import_frame.pack(fill=tk.X, pady=(0, int(6 * s)))
         self.import_cert_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(import_frame, text="导入证书到 Windows 证书存储（本地计算机 -> 个人）",
                         variable=self.import_cert_var).pack(anchor=tk.W)
         self.set_private_key_permission_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(import_frame, text="设置 NETWORK SERVICE 私钥读取权限",
-                        variable=self.set_private_key_permission_var).pack(anchor=tk.W, pady=(2, 0))
+                        variable=self.set_private_key_permission_var).pack(anchor=tk.W, pady=(int(2 * s), 0))
 
         # 按钮区域
-        button_frame = ttk.Frame(main_frame, height=50)
-        button_frame.pack(fill=tk.X, pady=(8, 6))
+        btn_h = int(50 * s)
+        button_frame = ttk.Frame(main_frame, height=btn_h)
+        button_frame.pack(fill=tk.X, pady=(int(8 * s), int(6 * s)))
         button_frame.pack_propagate(False)
         inner_button_frame = ttk.Frame(button_frame)
         inner_button_frame.place(relx=0.5, rely=0.5, anchor="center")
         button_width = 14
         ttk.Button(inner_button_frame, text="配置 RDP 证书",
-                   command=self.start_configuration, width=button_width).pack(side=tk.LEFT, padx=4)
+                   command=self.start_configuration, width=button_width).pack(side=tk.LEFT, padx=int(4 * s))
         ttk.Button(inner_button_frame, text="验证配置",
-                   command=self.verify_configuration, width=button_width).pack(side=tk.LEFT, padx=4)
+                   command=self.verify_configuration, width=button_width).pack(side=tk.LEFT, padx=int(4 * s))
         ttk.Button(inner_button_frame, text="清空日志",
-                   command=self.clear_log, width=button_width).pack(side=tk.LEFT, padx=4)
+                   command=self.clear_log, width=button_width).pack(side=tk.LEFT, padx=int(4 * s))
 
     def create_log_area(self):
-        log_frame = ttk.LabelFrame(self.root, text="操作日志", padding="10")
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
-        self.log_text = tk.Text(log_frame, height=15, wrap=tk.WORD, font=("微软雅黑", 9))
+        s = self._scale
+        log_h = int(self.root.winfo_height() * 2 / 3)
+        log_frame = ttk.LabelFrame(self.root, text="操作日志", padding=str(int(10 * s)),
+                                   height=log_h)
+        log_frame.pack(fill=tk.X, expand=False, padx=int(15 * s), pady=(0, int(10 * s)))
+        log_frame.pack_propagate(False)
+        self.log_text = tk.Text(log_frame, wrap=tk.WORD, font=("Cascadia Mono", 9))
         scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -162,13 +197,6 @@ class RDPCertificateGUI:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def toggle_password_entry(self):
-        if self.no_password_var.get():
-            self.password_entry.config(state='disabled')
-            self.password_var.set("")
-        else:
-            self.password_entry.config(state='normal')
-
     def toggle_show_password(self):
         self.password_entry.config(show="" if self.show_password_var.get() else "*")
 
@@ -179,18 +207,20 @@ class RDPCertificateGUI:
         if not zip_path or not os.path.exists(zip_path):
             messagebox.showerror("错误", "请选择有效的 ZIP 文件！")
             return
-        password = None if self.no_password_var.get() else self.password_var.get()
+        password = self.password_var.get() or None
         self.is_running = True
         threading.Thread(target=self.configure_certificate, args=(zip_path, password), daemon=True).start()
 
     def check_admin(self):
         try:
             if not ctypes.windll.shell32.IsUserAnAdmin():
-                messagebox.showerror("权限错误", "请以管理员身份运行此程序！")
+                if messagebox.askyesno("需要管理员权限",
+                                       "此操作需要管理员权限。\n是否立即以管理员身份重新启动程序？"):
+                    elevate_and_restart()
                 return False
             return True
-        except:
-            messagebox.showerror("权限错误", "无法检查管理员权限！")
+        except Exception as e:
+            messagebox.showerror("权限错误", f"无法检查管理员权限：{e}")
             return False
 
     def identify_certificate_files(self, directory):
@@ -529,25 +559,181 @@ class RDPCertificateGUI:
     def verify_configuration(self):
         if not self.check_admin():
             return
+        self.log("=" * 48)
+        self.log("开始验证 RDP SSL 配置...")
+        results = []
+
+        # ── 1. 读取注册表指纹 ──────────────────────────────
+        thumbprint = None
         try:
             key = r"SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
             with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key, 0, winreg.KEY_READ) as k:
                 val, _ = winreg.QueryValueEx(k, "SSLCertificateSHA1Hash")
-            tp = ''.join([f'{b:02X}' for b in val])
-            self.log(f"✅ 当前注册表指纹: {tp}")
-            messagebox.showinfo("验证成功", f"注册表中的证书指纹:\n{tp}")
+            thumbprint = ''.join([f'{b:02X}' for b in val])
+            self.log(f"✅ [1] 注册表指纹: {thumbprint}")
+            results.append(("注册表指纹", True, thumbprint))
         except Exception as e:
-            self.log(f"❌ 验证失败: {e}")
-            messagebox.showerror("错误", str(e))
+            self.log(f"❌ [1] 注册表中未找到证书指纹: {e}")
+            results.append(("注册表指纹", False, str(e)))
+
+        if not thumbprint:
+            self._show_verify_result(results)
+            return
+
+        # ── 2. 证书是否存在于本机个人证书库 ──────────────
+        ps_check_cert = f'''
+$tp = "{thumbprint}"
+$cert = Get-ChildItem Cert:\\LocalMachine\\My | Where-Object {{ $_.Thumbprint -eq $tp }}
+if ($cert) {{
+    Write-Output "FOUND"
+    Write-Output $cert.Subject
+    Write-Output $cert.NotBefore.ToString("yyyy-MM-dd")
+    Write-Output $cert.NotAfter.ToString("yyyy-MM-dd")
+}} else {{
+    Write-Output "NOTFOUND"
+}}
+'''
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", ps_check_cert],
+                               capture_output=True, text=True, timeout=15)
+            lines = [l.strip() for l in r.stdout.strip().splitlines() if l.strip()]
+            if lines and lines[0] == "FOUND":
+                subject   = lines[1] if len(lines) > 1 else "未知"
+                not_before = lines[2] if len(lines) > 2 else "?"
+                not_after  = lines[3] if len(lines) > 3 else "?"
+                self.log(f"✅ [2] 证书存在于个人证书库")
+                self.log(f"       主题: {subject}")
+                self.log(f"       有效期: {not_before} ~ {not_after}")
+                results.append(("证书存在", True, f"{not_before} ~ {not_after}"))
+                cert_not_after = not_after
+            else:
+                self.log(f"❌ [2] 证书不在本机个人证书库（LocalMachine\\My）中")
+                results.append(("证书存在", False, "未找到匹配指纹的证书"))
+                self._show_verify_result(results)
+                return
+        except Exception as e:
+            self.log(f"❌ [2] 检查证书库失败: {e}")
+            results.append(("证书存在", False, str(e)))
+            self._show_verify_result(results)
+            return
+
+        # ── 3. 证书是否在有效期内 ──────────────────────────
+        try:
+            from datetime import datetime
+            expiry = datetime.strptime(cert_not_after, "%Y-%m-%d")
+            now = datetime.now()
+            days_left = (expiry - now).days
+            if days_left > 0:
+                self.log(f"✅ [3] 证书有效，距到期还有 {days_left} 天")
+                results.append(("证书有效期", True, f"剩余 {days_left} 天"))
+            else:
+                self.log(f"❌ [3] 证书已过期（{abs(days_left)} 天前）")
+                results.append(("证书有效期", False, f"已过期 {abs(days_left)} 天"))
+        except Exception as e:
+            self.log(f"⚠️ [3] 无法解析有效期: {e}")
+            results.append(("证书有效期", False, str(e)))
+
+        # ── 4. NETWORK SERVICE 私钥读取权限 ───────────────
+        ps_check_acl = f'''
+$tp = "{thumbprint}"
+$cert = Get-ChildItem Cert:\\LocalMachine\\My | Where-Object {{ $_.Thumbprint -eq $tp }}
+if ($cert -and $cert.HasPrivateKey) {{
+    $keyName = $cert.PrivateKey.CspKeyContainerInfo.UniqueKeyContainerName
+    $keyPath1 = "C:\\ProgramData\\Microsoft\\Crypto\\RSA\\MachineKeys\\$keyName"
+    $keyPath2 = "C:\\ProgramData\\Microsoft\\Crypto\\Keys\\$keyName"
+    $keyPath = if (Test-Path $keyPath1) {{ $keyPath1 }} elseif (Test-Path $keyPath2) {{ $keyPath2 }} else {{ $null }}
+    if ($keyPath) {{
+        $acl = (Get-Acl $keyPath).Access | Where-Object {{ $_.IdentityReference -match "NETWORK SERVICE" -and $_.FileSystemRights -match "Read" }}
+        if ($acl) {{ Write-Output "OK" }} else {{ Write-Output "NOACL" }}
+    }} else {{ Write-Output "NOKEYFILE" }}
+}} else {{ Write-Output "NOPRIVKEY" }}
+'''
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", ps_check_acl],
+                               capture_output=True, text=True, timeout=15)
+            out = r.stdout.strip()
+            if out == "OK":
+                self.log("✅ [4] NETWORK SERVICE 拥有私钥读取权限")
+                results.append(("私钥权限", True, "NETWORK SERVICE 可读"))
+            elif out == "NOACL":
+                self.log("❌ [4] NETWORK SERVICE 缺少私钥读取权限")
+                results.append(("私钥权限", False, "需要重新运行配置"))
+            elif out == "NOPRIVKEY":
+                self.log("❌ [4] 证书没有关联私钥")
+                results.append(("私钥权限", False, "证书无私钥"))
+            else:
+                self.log(f"⚠️ [4] 无法定位私钥文件（{out}），跳过权限检查")
+                results.append(("私钥权限", None, "无法定位密钥文件"))
+        except Exception as e:
+            self.log(f"❌ [4] 权限检查失败: {e}")
+            results.append(("私钥权限", False, str(e)))
+
+        # ── 5. TermService 服务状态 ────────────────────────
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-Service -Name TermService).Status"],
+                capture_output=True, text=True, timeout=10)
+            status = r.stdout.strip()
+            if status == "Running":
+                self.log("✅ [5] 远程桌面服务 (TermService) 正在运行")
+                results.append(("TermService", True, "Running"))
+            else:
+                self.log(f"❌ [5] 远程桌面服务状态异常: {status}")
+                results.append(("TermService", False, status))
+        except Exception as e:
+            self.log(f"❌ [5] 无法查询服务状态: {e}")
+            results.append(("TermService", False, str(e)))
+
+        self._show_verify_result(results)
+
+    def _show_verify_result(self, results):
+        passed = [r for r in results if r[1] is True]
+        failed = [r for r in results if r[1] is False]
+        warned = [r for r in results if r[1] is None]
+
+        lines = ["── 验证结果汇总 ──"]
+        for name, ok, detail in results:
+            icon = "✅" if ok is True else ("⚠️" if ok is None else "❌")
+            lines.append(f"{icon} {name}: {detail}")
+
+        if not failed:
+            lines.append("\n🎉 所有检查通过，RDP SSL 加密应可正常工作。")
+            self.log("✅ 验证完成，所有检查通过")
+            messagebox.showinfo("验证通过", "\n".join(lines))
+        else:
+            lines.append(f"\n⚠️ {len(failed)} 项检查未通过，RDP SSL 加密可能无法正常工作。")
+            self.log(f"❌ 验证完成，{len(failed)} 项未通过")
+            messagebox.showwarning("验证未完全通过", "\n".join(lines))
+        self.log("=" * 48)
+
+
+
+def is_admin():
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except:
+        return False
+
+
+def elevate_and_restart():
+    """通过 UAC 弹窗以管理员身份重启当前脚本"""
+    script = os.path.abspath(sys.argv[0])
+    args = " ".join(f'"{a}"' for a in sys.argv[1:])
+    ret = ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", sys.executable, f'"{script}" {args}', None, 1
+    )
+    if ret <= 32:
+        messagebox.showerror("提权失败",
+                             f"无法获取管理员权限（错误码 {ret}），请右键脚本选择「以管理员身份运行」。")
+    sys.exit(0)
 
 
 def main():
-    try:
-        if not ctypes.windll.shell32.IsUserAnAdmin():
-            messagebox.showerror("权限错误", "请以管理员身份运行此程序！")
-            return
-    except:
-        pass
+    if not is_admin():
+        # 非管理员：触发 UAC 对话框，以管理员权限重启自身
+        elevate_and_restart()
+        return
     root = tk.Tk()
     app = RDPCertificateGUI(root)
     root.mainloop()
